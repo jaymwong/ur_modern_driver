@@ -52,6 +52,8 @@
 #include <controller_manager/controller_manager.h>
 #include <realtime_tools/realtime_publisher.h>
 
+#include <std_srvs/Empty.h>
+
 /// TF
 #include <tf/tf.h>
 #include <tf/transform_broadcaster.h>
@@ -69,6 +71,7 @@ protected:
 	ros::Subscriber urscript_sub_;
 	ros::ServiceServer io_srv_;
 	ros::ServiceServer payload_srv_;
+	ros::ServiceServer unlockProtStop_srv_;
 	std::thread* rt_publish_thread_;
 	std::thread* mb_publish_thread_;
 	double io_flag_delay_;
@@ -111,7 +114,7 @@ public:
 		    if (joint_prefix.length() > 0) {
     			sprintf(buf, "Setting prefix to %s", joint_prefix.c_str());
 	    		print_info(buf);
-	        }	
+	        }
         }
 		joint_names.push_back(joint_prefix + "shoulder_pan_joint");
 		joint_names.push_back(joint_prefix + "shoulder_lift_joint");
@@ -226,6 +229,8 @@ public:
 					&RosWrapper::setIO, this);
 			payload_srv_ = nh_.advertiseService("ur_driver/set_payload",
 					&RosWrapper::setPayload, this);
+			unlockProtStop_srv_ = nh_.advertiseService("ur_driver/unlock_protective_stop",
+					&RosWrapper::unlockProtectiveStop, this);
 		}
 	}
 
@@ -347,7 +352,7 @@ private:
 			print_error(result_.error_string);
 			return;
 		}
-        
+
 		if (!has_velocities()) {
 			result_.error_code = result_.INVALID_GOAL;
 			result_.error_string = "Received a goal without velocities";
@@ -375,7 +380,7 @@ private:
 		}
 
 		reorder_traj_joints(goal.trajectory);
-		
+
         if (!start_positions_match(goal.trajectory, 0.04)) {
 			result_.error_code = result_.INVALID_GOAL;
 			result_.error_string = "Goal start doesn't match current pose";
@@ -428,6 +433,10 @@ private:
 		result_.error_code = -100; //nothing is defined for this...?
 		result_.error_string = "Goal cancelled by client";
 		gh.setCanceled(result_);
+	}
+
+	bool unlockProtectiveStop(std_srvs::EmptyRequest&, std_srvs::EmptyResponse&){
+		return robot_.unlockProtectiveStop();
 	}
 
 	bool setIO(ur_msgs::SetIORequest& req, ur_msgs::SetIOResponse& resp) {
@@ -646,7 +655,7 @@ private:
 
 			// Broadcast transform
 			if( tf_pub.trylock() )
-			{			
+			{
 				tf_pub.msg_.transforms[0].header.stamp = ros_time;
 				if (angle < 1e-16) {
 					tf_pub.msg_.transforms[0].transform.rotation.x = 0;
@@ -670,7 +679,7 @@ private:
 			std::vector<double> tcp_speed = robot_.rt_interface_->robot_state_->getTcpSpeedActual();
 
 			if( tool_vel_pub.trylock() )
-			{			
+			{
 				tool_vel_pub.msg_.header.stamp = ros_time;
 				tool_vel_pub.msg_.twist.linear.x = tcp_speed[0];
 				tool_vel_pub.msg_.twist.linear.y = tcp_speed[1];
@@ -867,7 +876,13 @@ private:
 					print_error("Aborting trajectory");
 					robot_.stopTraj();
 					result_.error_code = result_.SUCCESSFUL;
-					result_.error_string = "Robot was halted";
+					// result_.error_string = "Robot was halted";
+
+					if(robot_.sec_interface_->robot_state_->isEmergencyStopped())
+						result_.error_string = "EMERGENCY STOP";
+					else
+						result_.error_string = "PROTECTIVE STOP";
+
 					goal_handle_.setAborted(result_, result_.error_string);
 					has_goal_ = false;
 				}
