@@ -53,6 +53,7 @@
 #include <realtime_tools/realtime_publisher.h>
 
 #include <std_srvs/Empty.h>
+#include <std_srvs/Trigger.h>
 
 /// TF
 #include <tf/tf.h>
@@ -69,9 +70,12 @@ protected:
 
 	ros::Subscriber speed_sub_;
 	ros::Subscriber urscript_sub_;
+
 	ros::ServiceServer io_srv_;
 	ros::ServiceServer payload_srv_;
 	ros::ServiceServer unlockProtStop_srv_;
+	ros::ServiceServer get_state_srv_;
+
 	std::thread* rt_publish_thread_;
 	std::thread* mb_publish_thread_;
 	double io_flag_delay_;
@@ -231,6 +235,9 @@ public:
 					&RosWrapper::setPayload, this);
 			unlockProtStop_srv_ = nh_.advertiseService("ur_driver/unlock_protective_stop",
 					&RosWrapper::unlockProtectiveStop, this);
+
+			get_state_srv_ = nh_.advertiseService("ur_driver/get_robot_state",
+					&RosWrapper::getRobotStateCallback, this);
 		}
 	}
 
@@ -433,6 +440,22 @@ private:
 		result_.error_code = -100; //nothing is defined for this...?
 		result_.error_string = "Goal cancelled by client";
 		gh.setCanceled(result_);
+	}
+
+	bool getRobotStateCallback(std_srvs::TriggerRequest& req, std_srvs::TriggerResponse& resp){
+		bool robot_on = robot_.sec_interface_->robot_state_->isPowerOnRobot();
+		bool protective_stopped = robot_.sec_interface_->robot_state_->isProtectiveStopped();
+		bool e_stopped = robot_.sec_interface_->robot_state_->isEmergencyStopped();
+		bool is_ready = robot_.sec_interface_->robot_state_->isReady();
+
+		bool success = true;
+		success = success && robot_on && is_ready && !protective_stopped && !e_stopped;
+		resp.success = success;
+
+		resp.message = "";
+		if (protective_stopped){ resp.message = resp.message + "PROTECTIVE_STOPPED;"; }
+		if (e_stopped){ resp.message = resp.message + "E_STOPPED;"; }
+		return true;
 	}
 
 	bool unlockProtectiveStop(std_srvs::EmptyRequest&, std_srvs::EmptyResponse&){
